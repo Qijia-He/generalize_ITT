@@ -58,38 +58,6 @@ Y_md13 <- function(X, U, Z){
   return(list(model = model, p = p) )
 }
 
-################################################################################
-# Scenario II
-Y_md22<- function(X, U, Z){
-  p <- expit(1.4 - 1*X[,1] - 0.6*X[,2]^0.5 + 0.4*X[,3] -0.6*X[,5] + 3.5*Z)
-  model <- rbinom(length(U), 1, prob = p)
-  return(list(model = model, p = p) )
-}
-
-Y_md21 <- function(X, U, Z){
-  p1 <- expit(2.6 - 0.6*X[,1] - 0.8*X[,2] + 0.4*X[,3]^0.5)
-  p0 <- expit(1.6 - 0.7*X[,1] - 0.7*X[,2]^3 + 0.4*X[,3] - 0.2*X[,5])
-  model <- rbinom(length(U), 1, prob = ifelse(Z == 1, p1, p0 ) )
-  return(list(model = model, p1 = p1, p0 = p0)  )
-}
-
-# P(Y | Z, X) in the target trial
-# P(Y = 1 | Z = 0, X) = 0
-# P(Y = 1 | Z = 1, X) satisfies ITT = CATE(X, h_1) * CC(X, h_2)
-
-Y_md23 <- function(X, U, Z){
-  #p = (expit(2.6 - 0.6*X[,1] - 0.8*X[,2] + 0.4*X[,3]^0.5)-
-  #      expit(1.6 - 0.7*X[,1] - 0.7*X[,2]^3 + 0.4*X[,3] - 0.2*X[,5]))/
-  # (expit(2-0.2*X[,5] + 0.2*X[,1]) - expit(-0.2*X[,5]-1))*
-  # (expit(4.5 - 0.3 * X[,1] - 0.4 * X[,5] + 0.2 * X[,1]+ 0.3 * X[,2] - 2)- expit(- 0.3 * X[,1] - 0.4 * X[,5] - 1.5))
-  p = (D_md2(1, X)$p - D_md2(0, X)$p )*
-    ( Y_md21(X, 1, 1)$p1 - Y_md21(X, 1, 0)$p0 )/
-    (D_md1(1, X)$p - D_md1(0, X)$p)
-  p[p > 1] <- 1
-  model = rbinom(length(U), 1, prob = ifelse(Z == 1, p, 0))
-  return(list(model = model, p = p) )
-}
-
 # Generate a dataset {X, Z, D, Y} given:
 # (1) D(Z) model: D | Z, X
 # (3) Y(D) model: Y(D) | X, U
@@ -203,206 +171,6 @@ Wald <- function(dt, method = 'binomial', outcome_model = 'glm'){
       return(numerator/denominator)
     }
   }
-}
-
-# Construct an efficient influence function to get EIF based estimator
-# Return the EIF based estimator phi.est and confidence interval
-# dt1 and dt2 are from two historical trials, and dt is from the NI trial
-# oucome_model = 'glm', 'rf', 'gam'
-
-EIF <- function(dt1, dt2, dt, outcome_model = 'glm'){
-  
-  data <- rbind(dt, dt1, dt2)
-  data$S <- c(rep(3, n), rep(1, n_1), rep(2, n_2) ) # 3 = NI; 1 = h1; 2 = h2
-  
-  # estimate posteriors f(S = s|X)
-  # posterior.S <- function(data, s){
-  #   model.f <- lda(S ~ .- Z - D - Y, data = data)
-  #   prediction <- model.f %>% predict(data)
-  #   posterior1 <- prediction$posterior
-  #   return(posterior[, which(colnames(posterior) == s)])
-  # }
-  
-  posterior.S <- function(data, s){
-    dt <- data
-    dt$S[dt$S != s] <- 0
-    dt$S[dt$S == s] <- 1
-    model.f = gam(S ~ s(X1) + s(X2) +s(X3) +s(X5), data = dt, family = 'binomial')
-    posterior = predict(model.f, newdata = data, type = 'response')
-    return(posterior)
-  }
-  
-  # f(Z | S = s, X) = 0.5
-  f.Z <- function(data, s){
-    return(0.5)
-  }
-  
-  # estimate mu0_Y(X; S = s) = E[Y |S, Z=0, X]
-  # estimate mu0_D(X; S = s) = E[D |S, Z=0, X]
-  if(outcome_model == 'glm'){
-    mu0.D <- function(data, s){
-      if(s == 2) {md_D_S = glm(D ~ X1, data = data, family = 'binomial', subset = (Z == 0) & (S == s)) }
-      if(s == 1) {md_D_S = glm(D ~ X1, data = data, family = 'binomial', subset = (Z == 0) & (S == s)) }
-      value = predict(md_D_S, newdata = data, type = 'response')
-      return(value)
-    }
-    mu1.D <- function(data, s){
-      if(s == 2) {md_D_S = glm(D ~ X1, data = data, family = 'binomial', subset = (Z == 1) & (S == s)) }
-      if(s == 1) {md_D_S = glm(D ~ X1, data = data, family = 'binomial', subset = (Z == 1) & (S == s)) }
-      value = predict(md_D_S, newdata = data, type = 'response')
-      return(value)
-    }
-    mu0.Y <- function(data, s){
-      md_Y_S = glm(Y ~ 1, data = data, family = 'binomial', subset = (Z == 0) & (S == s)) 
-      value = predict(md_Y_S, newdata = data, type = 'response')
-      return(value)
-    }
-    mu1.Y <- function(data, s){
-      if(s == 2) {md_Y_S = glm(Y ~ 1, data = data, family = 'binomial', subset = (Z == 1) & (S == s))}
-      if(s == 1) {md_Y_S = glm(Y ~ 1, data = data, family = 'binomial', subset = (Z == 1) & (S == s))}
-      value = predict(md_Y_S, newdata = data, type = 'response')
-      return(value)
-    }
-  }
-  
-  if(outcome_model == 'rf'){
-    mu0.D <- function(data, s){
-      if(s == 2) {md_D_S = randomForest(x = data[data$Z == 0 & data$S == s, c(1, 5)], 
-                                        y = as.factor(data$D[data$Z == 0 & data$S == s]), 
-                                        ntree = 500, nodesize = length((data$D[data$Z == 0 & data$S == s])/10)) }
-      if(s == 1) { md_D_S = randomForest(as.factor(D) ~ X5, 
-                                         data = data, subset = (Z == 0) & (S == s), 
-                                         ntree = 500, nodesize = length((data$D[data$Z == 0 & data$S == s])/10))}
-      value = predict(md_D_S, newdata = data, type = 'prob')[,2]
-      return(value)
-    }
-    
-    mu1.D <- function(data, s){
-      if(s == 2) {md_D_S = randomForest(x = data[data$Z == 1 & data$S == s, c(1, 2, 5)], 
-                                        y = as.factor(data$D[data$Z == 1 & data$S == s]), 
-                                        ntree = 500, nodesize = length((data$D[data$Z == 1 & data$S == s])/10))}
-      
-      if(s == 1) {md_D_S = randomForest(x = data[data$Z == 1 & data$S == s, c(1, 5)], 
-                                        y = as.factor(data$D[data$Z == 1 & data$S == s]), 
-                                        ntree = 500, nodesize = length((data$D[data$Z == 0 & data$S == s])/10))}
-      value = predict(md_D_S, newdata = data, type = 'prob')[,2]
-      return(value)
-    }
-    mu0.Y <- function(data, s){
-      md_Y_S = randomForest(x = data[data$Z == 0 & data$S == s, c(1, 2, 3, 5)], 
-                            y = as.factor(data$Y[data$Z == 0 & data$S == s]), ntree = 500)
-      value = predict(md_Y_S, newdata = data, type = 'prob')[,2]
-      return(value)
-    }
-    
-    mu1.Y <- function(data, s){
-      if(s == 2) {md_Y_S = randomForest(x = data[data$Z == 1 & data$S == s, c(1, 2, 3, 5)], 
-                                        y = as.factor(data$Y[data$Z == 1 & data$S == s]), ntree = 500)}
-      if(s == 1) {md_Y_S = randomForest(x = data[data$Z == 1 & data$S == s, 1:3], 
-                                        y = as.factor(data$Y[data$Z == 1 & data$S == s]), ntree = 500)}
-      value = predict(md_Y_S, newdata = data, type = 'prob')[,2]
-      return(value)
-    }
-  }
-  
-  if(outcome_model == 'gam'){
-    mu0.D <- function(data, s){
-      if(s == 2) {md_D_S = gam(D ~ s(X1) + s(X5), data = data, family = 'binomial', subset = (Z == 0) & (S == s)) }
-      if(s == 1) {md_D_S = gam(D ~ s(X5), data = data, family = 'binomial', subset = (Z == 0) & (S == s)) }
-      value = predict(md_D_S, newdata = data, type = 'response')
-      return(value)
-    }
-    mu1.D <- function(data, s){
-      if(s == 2) {md_D_S = gam(D ~ s(X1) + s(X2) + s(X5), data = data, family = 'binomial', subset = (Z == 1) & (S == s)) }
-      if(s == 1) {md_D_S = gam(D ~ s(X1) + s(X5), data = data, family = 'binomial', subset = (Z == 1) & (S == s)) }
-      value = predict(md_D_S, newdata = data, type = 'response')
-      return(value)
-    }
-    mu0.Y <- function(data, s){
-      md_Y_S = gam(Y ~ s(X1) + s(X2) + s(X3) + s(X5), data = data, family = 'binomial', subset = (Z == 0) & (S == s)) 
-      value = predict(md_Y_S, newdata = data, type = 'response')
-      return(value)
-    }
-    mu1.Y <- function(data, s){
-      if(s == 2) {md_Y_S = gam(Y ~ s(X1) + s(X2) + s(X3) + s(X5), data = data, family = 'binomial', subset = (Z == 1) & (S == s))}
-      if(s == 1) {md_Y_S = gam(Y ~ s(X1) + s(X2) + s(X3), data = data, family = 'binomial', subset = (Z == 1) & (S == s))}
-      value = predict(md_Y_S, newdata = data, type = 'response')
-      return(value)
-    }
-  }
-  
-  # estimate conditional compliance for S=s: delta_D(X; s)
-  # estimate ITT for S=s: delta_Y(X; s)
-  # estimate wald estimator for S=s: delta(X; s) = delta_D(X; s)/delta_Y(X; s)
-  
-  delta_D <- function(data, s){
-    value <- mu1.D(data, s) - mu0.D(data, s) 
-    return(value)
-  }
-  
-  delta_Y <- function(data, s){
-    value <- mu1.Y(data, s) - mu0.Y(data, s)
-    return(value)
-  }
-  
-  delta <- function(data, s){
-    delta_D <- delta_D(data, s)
-    delta_Y <- delta_Y(data, s)
-    return(delta_Y/delta_D)
-  }
-  
-  delta_D_1 <- delta_D(data, 1)
-  delta_D_2 <- delta_D(data, 2)
-  delta_Y_1 <- delta_Y(data, 1)
-  delta_1 <- delta_Y_1/delta_D_1
-  posterior.S3 <-  posterior.S(data, 3)
-  term1 <- (2*data$Z - 1)*(data$S == 1)/f.Z(data, 1) * 
-    posterior.S3/posterior.S(data, 1) *
-    delta_D_2/delta_D_1 *
-    (data$Y - mu0.Y(data, 1) - (data$D - mu0.D(data, 1))*delta_1)
-  
-  term2 <- (2*data$Z - 1)*(data$S == 2)/f.Z(data, 2) * 
-    posterior.S3/posterior.S(data, 2) *
-    delta_1 *
-    (data$D - mu0.D(data, 2) - delta_D_2*data$Z)
-  
-  term3 <- (data$S == 3)*delta_1*delta_D_2
-  
-  k <- term1 + term2 + term3
-  phi.est <- sum(k)/length(data[which(data$S == 3), 1])
-  EIF <- 3*term1 + 3*term2 + 3*(term3 - (data$S == 3)*phi.est)
-  var <- mean(EIF^2)/(3*n)
-  lower <- phi.est - qnorm(0.975)*sqrt(var)
-  upper <- phi.est + qnorm(0.975)*sqrt(var)
-  #phi.win <-  sum( Winsorize(k, probs = c(0.01, 0.99)))/length(data[which(data$S == 3), 1])
-  
-  return(list = c(phi.est = phi.est, lower = lower, upper = upper,
-                  var = var
-                  #, phi.win = phi.win
-  ) )
-}
-
-
-# Bootstrap a confidence interval for the EIF based estimator
-var_boot_EIF <- function(dt1, dt2, dt, outcome_model = 'glm', winsorize = F, n_boot = 1000){
-  
-  est_boot_EIF = numeric(n_boot)
-  for (i in 1:n_boot){
-    # Resample dtt, dt2, and dt
-    n_1 = dim(dt1)[1]
-    dt1_resample = dt1[sample(n_1, n_1, replace = TRUE), ]
-    
-    n_2 = dim(dt2)[1]
-    dt2_resample = dt2[sample(n_2, n_2, replace = TRUE), ]
-    
-    n = dim(dt)[1]
-    dt_resample = dt[sample(n, n, replace = TRUE), ]
-    
-    est_boot_EIF[i] <- EIF(dt1_resample, dt2_resample, dt_resample, outcome_model)[1]
-    #if(is.na(est_boot_EIF[i])){ dd <- data.frame(rbind(dt1_resample, dt2_resample, dt_resample))}
-  }
-  k.na <- sum(is.na(est_boot_EIF))
-  return(c(quantile(est_boot_EIF, 0.025), quantile(est_boot_EIF, 0.975), k.na) )
 }
 
 
@@ -519,11 +287,6 @@ run_simu_once <- function(n_1, n_2, n, c, D_md1, D_md2, Y_md1, Y_md2, Y_md3,
   # the ground truth estimator
   est_ground_truth = mean(dt$Y[dt$Z==1]) - mean(dt$Y[dt$Z==0])
   
-  # EIF based estimator when outcome_model = 'glm'
-  est_EIF <- EIF(dt1 = dt_h1, dt2 = dt_h2, dt = dt)[1]
-  # EIF based estimator when outcome_model = 'gam'
-  est_EIF_gam <- EIF(dt1 = dt_h1, dt2 = dt_h2, dt = dt, outcome_model = 'gam')[1]
-  
   # Calculate the historical-data-driven estimator: Wald-based when outcome_model = 'glm'
   cc_x = CC(dt_h2)
   cate_x = Wald(dt_h1, method = 'binomial')
@@ -575,32 +338,18 @@ run_simu_once <- function(n_1, n_2, n, c, D_md1, D_md2, Y_md1, Y_md2, Y_md3,
     boot_est = var_boot(dt1 = dt_h1, dt2 = dt_h2, dt = dt, n_boot = n_boot)
     wald_CI_lower = quantile(boot_est, 0.025)
     wald_CI_upper = quantile(boot_est, 0.975)
-    
-    # Bootstrap the variance associated with the estimate
-    est_EIF <- EIF(dt1 = dt_h1, dt2 = dt_h2, dt = dt)[1]
-    boot_est_EIF = var_boot_EIF(dt1 = dt_h1, dt2 = dt_h2, dt = dt, winsorize = F, n_boot = n_boot)
-    EIF_CI_lower = boot_est_EIF[1]
-    EIF_CI_upper = boot_est_EIF[2]
-    
-    EIF.md <- EIF(dt1 = dt_h1, dt2 = dt_h2, dt = dt, outcome_model = 'gam')
-    est_EIF_gam <- EIF.md[1]
-    lower.b <- EIF.md[2]
-    upper.b <- EIF.md[3]
+  
     
     return(c( 
       est_ground_truth, est_ground_truth_CI_lower, est_ground_truth_CI_upper,
       naive_h1_est, naive_h1_CI_lower, naive_h1_CI_upper,
       naive_h2_est, naive_h2_CI_lower, naive_h2_CI_upper,
-      est_wald,  wald_CI_lower, wald_CI_upper,
-      est_EIF,  EIF_CI_lower, EIF_CI_upper,
-      est_EIF_gam, lower.b, upper.b
+      est_wald,  wald_CI_lower, wald_CI_upper
     ))
   } else {
     return(c(est_ground_truth, 
              est_naive1, est_naive2,
-             est_wald,
-             est_EIF, 
-             est_EIF_gam
+             est_wald
     ))
   }
   
@@ -619,9 +368,9 @@ D_md2 = D_md2
 
 n_boot = 1000
 
-simu_res1000 = data.frame(est = c(run_simu_once(n_1, n_2, n, 0, D_md1, D_md2, Y_md21, Y_md22, Y_md23, n_boot = n_boot, variance = T),
-                                  run_simu_once(n_1, n_2, n, 0.25, D_md1, D_md2, Y_md21, Y_md22, Y_md23, n_boot = n_boot, variance = T),
-                                  run_simu_once(n_1, n_2, n, 0.50, D_md1, D_md2, Y_md21, Y_md22, Y_md23, n_boot = n_boot, variance = T)) )
+simu_res1000 = data.frame(est = c(run_simu_once(n_1, n_2, n, 0, D_md1, D_md2, Y_md11, Y_md12, Y_md13, n_boot = n_boot, variance = T),
+                                  run_simu_once(n_1, n_2, n, 0.25, D_md1, D_md2, Y_md11, Y_md12, Y_md13, n_boot = n_boot, variance = T),
+                                  run_simu_once(n_1, n_2, n, 0.50, D_md1, D_md2, Y_md11, Y_md12, Y_md13, n_boot = n_boot, variance = T)) )
 
 
 simu_res1000
